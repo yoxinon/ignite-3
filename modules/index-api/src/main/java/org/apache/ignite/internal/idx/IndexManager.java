@@ -28,6 +28,7 @@ import org.apache.ignite.internal.manager.Producer;
 import org.apache.ignite.lang.IndexAlreadyExistsException;
 import org.apache.ignite.lang.IndexNotFoundException;
 import org.apache.ignite.lang.NodeStoppingException;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Internal index manager facade provides low-level methods for indexes operations.
@@ -102,4 +103,12 @@ public interface IndexManager extends Producer<IndexEvent, IndexEventParameters>
      * @throws NodeStoppingException If an implementation stopped before the method was invoked.
      */
     CompletableFuture<InternalSortedIndex> indexAsync(String idxCanonicalName);
+
+    /**
+     * Returns index by specified id.
+     *
+     * @param id Index id.
+     * @return Index or {@code null} if can`t be found.
+     */
+    @Nullable InternalSortedIndex getIndexById(UUID id);
 }

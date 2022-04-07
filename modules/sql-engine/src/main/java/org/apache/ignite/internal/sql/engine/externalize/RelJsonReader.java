@@ -28,6 +28,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.function.Function;
 import org.apache.calcite.plan.RelOptCluster;
@@ -47,6 +48,7 @@ import org.apache.calcite.sql.SqlAggFunction;
 import org.apache.calcite.util.ImmutableBitSet;
 import org.apache.calcite.util.Pair;
 import org.apache.calcite.util.Util;
+import org.apache.ignite.internal.sql.engine.schema.IgniteIndex;
 import org.apache.ignite.internal.sql.engine.schema.IgniteTable;
 import org.apache.ignite.internal.sql.engine.schema.SqlSchemaManager;
 import org.apache.ignite.internal.sql.engine.util.Commons;
@@ -155,10 +157,27 @@ public class RelJsonReader {
         @Override
         public RelOptTable getTableById(String tag) {
             String tableId = getString(tag);
+
+            Objects.requireNonNull(tableId);
+
             IgniteTable table = schemaManager.tableById(UUID.fromString(tableId));
 
-            return RelOptTableImpl.create(null, table.getRowType(Commons.typeFactory()), List.of(tableId),
+            List<String> tableName = getStringList("table");
+
+            return RelOptTableImpl.create(null, table.getRowType(Commons.typeFactory()), tableName,
                     table, null);
+        }
+
+        /** {@inheritDoc} */
+        @Override
+        public IgniteIndex getIndexById(String tag, String idxName) {
+            String idxId = getString(tag);
+
+            Objects.requireNonNull(idxId);
+
+            UUID id = UUID.fromString(idxId);
+
+            return schemaManager.indexById(id);
         }
 
         /** {@inheritDoc} */

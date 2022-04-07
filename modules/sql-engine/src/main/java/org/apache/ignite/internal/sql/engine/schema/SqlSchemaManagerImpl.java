@@ -33,6 +33,7 @@ import org.apache.calcite.schema.SchemaPlus;
 import org.apache.calcite.schema.Table;
 import org.apache.calcite.schema.impl.AbstractSchema;
 import org.apache.calcite.tools.Frameworks;
+import org.apache.ignite.internal.idx.IndexManager;
 import org.apache.ignite.internal.idx.InternalSortedIndex;
 import org.apache.ignite.internal.schema.Column;
 import org.apache.ignite.internal.schema.SchemaDescriptor;
@@ -41,6 +42,7 @@ import org.apache.ignite.internal.sql.engine.extension.SqlExtension.ExternalSche
 import org.apache.ignite.internal.table.TableImpl;
 import org.apache.ignite.internal.table.distributed.TableManager;
 import org.apache.ignite.lang.IgniteInternalException;
+import org.apache.ignite.lang.IgniteLogger;
 import org.apache.ignite.lang.IgniteStringFormatter;
 import org.apache.ignite.lang.NodeStoppingException;
 import org.jetbrains.annotations.NotNull;
@@ -50,9 +52,14 @@ import org.jetbrains.annotations.Nullable;
  * Holds actual schema and mutates it on schema change, requested by Ignite.
  */
 public class SqlSchemaManagerImpl implements SqlSchemaManager {
+    /** Logger. */
+    private static final IgniteLogger LOG = IgniteLogger.forClass(SqlSchemaManagerImpl.class);
+
     private final Map<String, IgniteSchema> igniteSchemas = new HashMap<>();
 
     private final Map<UUID, IgniteTable> tablesById = new ConcurrentHashMap<>();
+
+    private final Map<UUID, IgniteIndex> indexById = new ConcurrentHashMap<>();
 
     private final Map<String, Schema> externalCatalogs = new HashMap<>();
 
@@ -60,15 +67,18 @@ public class SqlSchemaManagerImpl implements SqlSchemaManager {
 
     private final TableManager tableManager;
 
+    private final IndexManager indexManager;
+
     private volatile SchemaPlus calciteSchema;
 
     /**
      * Constructor.
      * TODO Documentation https://issues.apache.org/jira/browse/IGNITE-15859
      */
-    public SqlSchemaManagerImpl(TableManager tableManager, Runnable onSchemaUpdatedCallback) {
+    public SqlSchemaManagerImpl(TableManager tblManager, IndexManager idxManager, Runnable onSchemaUpdatedCallback) {
+        tableManager = tblManager;
+        indexManager = idxManager;
         this.onSchemaUpdatedCallback = onSchemaUpdatedCallback;
-        this.tableManager = tableManager;
 
         SchemaPlus newCalciteSchema = Frameworks.createRootSchema(false);
         newCalciteSchema.add("PUBLIC", new IgniteSchema("PUBLIC"));
@@ -104,6 +114,25 @@ public class SqlSchemaManagerImpl implements SqlSchemaManager {
         }
 
         return table;
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public IgniteIndex indexById(UUID id) throws IgniteInternalException {
+        IgniteIndex idx = indexById.get(id);
+
+        if (idx == null) {
+            indexManager.getIndexById(id);
+
+            idx = indexById.get(id);
+        }
+
+        if (idx == null) {
+            throw new IgniteInternalException(
+                    IgniteStringFormatter.format("Index not found [idxId={}]", id));
+        }
+
+        return idx;
     }
 
     private void ensureTableStructuresCreated(UUID id) {
@@ -163,7 +192,7 @@ public class SqlSchemaManagerImpl implements SqlSchemaManager {
 
         IgniteSchema schema = igniteSchemas.computeIfAbsent(schemaName, IgniteSchema::new);
 
-        schema.addTable(removeSchema(schemaName, table.name()), igniteTable);
+        schema.addTable(normalizeSchema(schemaName, table.name()), igniteTable);
         tablesById.put(igniteTable.id(), igniteTable);
 
         rebuild();
@@ -204,7 +233,7 @@ public class SqlSchemaManagerImpl implements SqlSchemaManager {
 
         IgniteSchema schema = igniteSchemas.computeIfAbsent(schemaName, IgniteSchema::new);
 
-        String tblName = removeSchema(schemaName, table.name());
+        String tblName = normalizeSchema(schemaName, table.name());
 
         // Rebuild indexes collation.
         igniteTable.addIndexes(schema.internalTable(tblName).indexes().values().stream()
@@ -230,6 +259,8 @@ public class SqlSchemaManagerImpl implements SqlSchemaManager {
 
         InternalIgniteTable table = (InternalIgniteTable) schema.getTable(tableName);
         if (table != null) {
+            table.indexes().values().forEach(indexById::remove);
+
             tablesById.remove(table.id());
             schema.removeTable(tableName);
         }
@@ -241,7 +272,7 @@ public class SqlSchemaManagerImpl implements SqlSchemaManager {
      * Build new SQL schema when new index is created.
      */
     public void onIndexCreated(String schema, String tblName, InternalSortedIndex idx) {
-        InternalIgniteTable tbl = igniteSchemas.get(schema).internalTable(removeSchema(schema, tblName));
+        InternalIgniteTable tbl = igniteSchemas.get(schema).internalTable(normalizeSchema(schema, tblName));
 
         tbl.addIndex(createIndex(idx, tbl));
 
@@ -262,20 +293,28 @@ public class SqlSchemaManagerImpl implements SqlSchemaManager {
                         )
                 ).collect(Collectors.toList());
 
-        return new IgniteIndex(
-                RelCollations.of(idxFieldsCollation),
-                idx,
-                tbl
-        );
+        IgniteIndex idx0 = new IgniteIndex(RelCollations.of(idxFieldsCollation), idx, tbl);
+
+        indexById.put(idx0.id(), idx0);
+
+        return idx0;
     }
 
     /**
      * Build new SQL schema when existed index is dropped.
      */
     public void onIndexDropped(String schema, String tblName, String idxName) {
-        InternalIgniteTable tbl = igniteSchemas.get(schema).internalTable(removeSchema(schema, tblName));
+        InternalIgniteTable tbl = igniteSchemas.get(schema).internalTable(normalizeSchema(schema, tblName));
 
-        tbl.removeIndex(idxName);
+        IgniteIndex idx0 = tbl.removeIndex(idxName);
+
+        if (idx0 != null) {
+            IgniteIndex old = indexById.remove(idx0.id());
+
+            if (old == null) {
+                LOG.trace(IgniteStringFormatter.format("Index [name={}] not found in inner store.", idxName));
+            }
+        }
 
         rebuild();
     }
@@ -293,7 +332,7 @@ public class SqlSchemaManagerImpl implements SqlSchemaManager {
         onSchemaUpdatedCallback.run();
     }
 
-    private static String removeSchema(String schemaName, String canonicalName) {
+    private static String normalizeSchema(String schemaName, String canonicalName) {
         return canonicalName.substring(schemaName.length() + 1);
     }
 

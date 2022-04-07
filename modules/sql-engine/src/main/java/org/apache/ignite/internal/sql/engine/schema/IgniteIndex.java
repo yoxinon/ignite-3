@@ -17,6 +17,8 @@
 
 package org.apache.ignite.internal.sql.engine.schema;
 
+import java.util.Objects;
+import java.util.UUID;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
@@ -33,8 +35,6 @@ import org.apache.ignite.internal.sql.engine.metadata.ColocationGroup;
 public class IgniteIndex {
     private final RelCollation collation;
 
-    private final String idxName;
-
     private final InternalSortedIndex idx;
 
     private final InternalIgniteTable tbl;
@@ -43,27 +43,10 @@ public class IgniteIndex {
      * Constructor.
      * TODO Documentation https://issues.apache.org/jira/browse/IGNITE-15859
      */
-    public IgniteIndex(RelCollation collation, String name, InternalIgniteTable tbl) {
-        this(collation, name, null, tbl);
-    }
-
-    /**
-     * Constructor.
-     * TODO Documentation https://issues.apache.org/jira/browse/IGNITE-15859
-     */
     public IgniteIndex(RelCollation collation, InternalSortedIndex idx, InternalIgniteTable tbl) {
-        this(collation, idx.name(), idx, tbl);
-    }
-
-    /**
-     * Constructor.
-     * TODO Documentation https://issues.apache.org/jira/browse/IGNITE-15859
-     */
-    private IgniteIndex(RelCollation collation, String name, InternalSortedIndex idx, InternalIgniteTable tbl) {
-        this.collation = collation;
-        idxName = name;
-        this.idx = idx;
-        this.tbl = tbl;
+        this.collation = Objects.requireNonNull(collation);
+        this.idx = Objects.requireNonNull(idx);
+        this.tbl = Objects.requireNonNull(tbl);
     }
 
     public RelCollation collation() {
@@ -71,7 +54,7 @@ public class IgniteIndex {
     }
 
     public String name() {
-        return idxName;
+        return idx.name();
     }
 
     public InternalIgniteTable table() {
@@ -80,6 +63,10 @@ public class IgniteIndex {
 
     public InternalSortedIndex index() {
         return idx;
+    }
+
+    public UUID id() {
+        return idx.id();
     }
 
     /**

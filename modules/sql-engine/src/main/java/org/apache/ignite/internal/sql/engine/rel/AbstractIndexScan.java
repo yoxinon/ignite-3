@@ -17,6 +17,8 @@
 
 package org.apache.ignite.internal.sql.engine.rel;
 
+import static org.apache.calcite.sql.SqlExplainLevel.EXPPLAN_ATTRIBUTES;
+
 import java.util.List;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelOptCost;
@@ -31,7 +33,9 @@ import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.rex.RexUtil;
 import org.apache.calcite.util.ImmutableBitSet;
+import org.apache.ignite.internal.sql.engine.externalize.RelInputEx;
 import org.apache.ignite.internal.sql.engine.metadata.cost.IgniteCost;
+import org.apache.ignite.internal.sql.engine.schema.IgniteIndex;
 import org.apache.ignite.internal.sql.engine.util.IndexConditions;
 import org.jetbrains.annotations.Nullable;
 
@@ -39,7 +43,7 @@ import org.jetbrains.annotations.Nullable;
  * Class with index conditions info.
  */
 public abstract class AbstractIndexScan extends ProjectableFilterableTableScan {
-    protected final String idxName;
+    protected final IgniteIndex index;
 
     protected final IndexConditions idxCond;
 
@@ -50,7 +54,8 @@ public abstract class AbstractIndexScan extends ProjectableFilterableTableScan {
      */
     protected AbstractIndexScan(RelInput input) {
         super(input);
-        idxName = input.getString("index");
+        String idxName = input.getString("indexName");
+        index = ((RelInputEx) input).getIndexById("indexId", idxName);
         idxCond = new IndexConditions(input);
     }
 
@@ -63,7 +68,7 @@ public abstract class AbstractIndexScan extends ProjectableFilterableTableScan {
             RelTraitSet traitSet,
             List<RelHint> hints,
             RelOptTable table,
-            String idxName,
+            IgniteIndex idx,
             @Nullable List<RexNode> proj,
             @Nullable RexNode cond,
             @Nullable IndexConditions idxCond,
@@ -71,25 +76,26 @@ public abstract class AbstractIndexScan extends ProjectableFilterableTableScan {
     ) {
         super(cluster, traitSet, hints, table, proj, cond, reqColumns);
 
-        this.idxName = idxName;
+        this.index = idx;
         this.idxCond = idxCond;
     }
 
     /** {@inheritDoc} */
     @Override
     protected RelWriter explainTerms0(RelWriter pw) {
-        pw = pw.item("index", idxName);
+        pw = pw.item("indexName", index.name());
+        pw = pw.itemIf("indexId", index.id().toString(), pw.getDetailLevel() != EXPPLAN_ATTRIBUTES);
         pw = super.explainTerms0(pw);
 
         return idxCond.explainTerms(pw);
     }
 
     /**
-     * Get index name.
+     * Get index instance.
      * TODO Documentation https://issues.apache.org/jira/browse/IGNITE-15859
      */
-    public String indexName() {
-        return idxName;
+    public IgniteIndex getIndex() {
+        return index;
     }
 
     /**

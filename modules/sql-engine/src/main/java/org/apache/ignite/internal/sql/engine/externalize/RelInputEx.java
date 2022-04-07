@@ -20,6 +20,8 @@ package org.apache.ignite.internal.sql.engine.externalize;
 import org.apache.calcite.plan.RelOptTable;
 import org.apache.calcite.rel.RelCollation;
 import org.apache.calcite.rel.RelInput;
+import org.apache.ignite.internal.sql.engine.schema.IgniteIndex;
+import org.apache.ignite.lang.IndexNotFoundException;
 
 /**
  * Extension to the {@link RelInput} interface.
@@ -38,8 +40,17 @@ public interface RelInputEx extends RelInput {
     /**
      * Returns table by its id.
      *
-     * @param tag Tag under which id is serialised.
+     * @param tag Tag under which id is serialized.
      * @return A table with given id.
      */
     RelOptTable getTableById(String tag);
+
+    /**
+     * Returns an index by its id.
+     *
+     * @param tag Tag represents id serialization.
+     * @param idxName Index name.
+     * @throws IndexNotFoundException If not found.
+     */
+    IgniteIndex getIndexById(String tag, String idxName);
 }

@@ -29,7 +29,10 @@ import java.util.UUID;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.schema.Statistic;
+import org.apache.ignite.internal.sql.engine.rel.AbstractIndexScan;
+import org.apache.ignite.internal.sql.engine.rel.IgniteIndexScan;
 import org.apache.ignite.internal.sql.engine.rel.IgniteTableScan;
+import org.apache.ignite.internal.sql.engine.schema.IgniteIndex;
 import org.apache.ignite.internal.sql.engine.schema.IgniteTable;
 import org.apache.ignite.internal.sql.engine.schema.SqlSchemaManager;
 import org.junit.jupiter.api.Test;
@@ -39,12 +42,11 @@ import org.mockito.Mockito;
  * Tests to verify {@link RelJsonReader} behaviour.
  */
 public class RelJsonReaderTest {
-
     /**
      * Test verifies that during deserialization table being resolved by its ID.
      */
     @Test
-    void fromJson() {
+    void fromJsonTblScan() {
         UUID tableId = UUID.randomUUID();
 
         IgniteTable igniteTableMock = mock(IgniteTable.class);
@@ -59,6 +61,7 @@ public class RelJsonReaderTest {
                 + "  \"rels\" : [ {\n"
                 + "    \"id\" : \"0\",\n"
                 + "    \"relOp\" : \"IgniteTableScan\",\n"
+                + "    \"table\" : [\"PUBLIC\", \"TEST\"],\n"
                 + "    \"tableId\" : \"" + tableId + "\",\n"
                 + "    \"inputs\" : [ ]\n"
                 + "  } ]\n"
@@ -70,5 +73,47 @@ public class RelJsonReaderTest {
         assertThat(node.getTable(), notNullValue());
         assertThat(node.getTable().unwrap(IgniteTable.class), is(igniteTableMock));
         Mockito.verify(schemaMock).tableById(tableId);
+    }
+
+    @Test
+    void fromJsonIdxScan() {
+        UUID indexId = UUID.randomUUID();
+        UUID tableId = UUID.randomUUID();
+
+        IgniteTable igniteTableMock = mock(IgniteTable.class);
+        IgniteIndex igniteIdxMock = mock(IgniteIndex.class);
+        when(igniteTableMock.getStatistic()).thenReturn(new Statistic() {});
+        when(igniteTableMock.getRowType(any())).thenReturn(mock(RelDataType.class));
+
+        SqlSchemaManager schemaMock = mock(SqlSchemaManager.class);
+
+        when(schemaMock.tableById(tableId)).thenReturn(igniteTableMock);
+        when(schemaMock.indexById(indexId)).thenReturn(igniteIdxMock);
+
+        String json = ""
+                + "{\n"
+                + "  \"rels\" : [ {\n"
+                + "    \"id\" : \"0\",\n"
+                + "    \"relOp\" : \"IgniteIndexScan\",\n"
+                + "    \"index\" : \"idx0\",\n"
+                + "    \"table\" : [\"PUBLIC\", \"TEST\"],\n"
+                + "    \"indexId\" : \"" + indexId + "\",\n"
+                + "    \"tableId\" : \"" + tableId + "\",\n"
+                + "    \"inputs\" : [ ]\n"
+                + "  } ]\n"
+                + "}";
+
+        RelNode node = RelJsonReader.fromJson(schemaMock, json);
+
+        assertThat(node, isA(IgniteIndexScan.class));
+        assertThat(node.getTable(), notNullValue());
+        assertThat(node.getTable().unwrap(IgniteTable.class), is(igniteTableMock));
+
+        AbstractIndexScan scan = (AbstractIndexScan) node;
+        assertThat(scan.getIndex(), notNullValue());
+        assertThat(scan.getIndex(), is(igniteIdxMock));
+
+        Mockito.verify(schemaMock).tableById(tableId);
+        Mockito.verify(schemaMock).indexById(indexId);
     }
 }

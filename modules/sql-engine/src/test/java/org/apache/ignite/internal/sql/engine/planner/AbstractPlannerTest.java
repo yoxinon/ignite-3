@@ -27,6 +27,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
+import static org.mockito.Mockito.mock;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -71,6 +72,7 @@ import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql2rel.InitializerContext;
 import org.apache.calcite.util.ImmutableBitSet;
 import org.apache.calcite.util.Util;
+import org.apache.ignite.internal.idx.InternalSortedIndexImpl;
 import org.apache.ignite.internal.schema.BinaryRow;
 import org.apache.ignite.internal.schema.NativeType;
 import org.apache.ignite.internal.sql.engine.exec.ExecutionContext;
@@ -100,7 +102,9 @@ import org.apache.ignite.internal.sql.engine.trait.IgniteDistribution;
 import org.apache.ignite.internal.sql.engine.type.IgniteTypeFactory;
 import org.apache.ignite.internal.sql.engine.type.IgniteTypeSystem;
 import org.apache.ignite.internal.sql.engine.util.BaseQueryContext;
+import org.apache.ignite.internal.storage.index.SortedIndexStorage;
 import org.apache.ignite.internal.table.InternalTable;
+import org.apache.ignite.internal.table.TableImpl;
 import org.apache.ignite.internal.testframework.IgniteAbstractTest;
 import org.apache.ignite.internal.testframework.IgniteTestUtils;
 import org.apache.ignite.internal.util.ArrayUtils;
@@ -312,15 +316,10 @@ public abstract class AbstractPlannerTest extends IgniteAbstractTest {
     }
 
     protected static void createTable(IgniteSchema schema, String name, RelDataType type, IgniteDistribution distr) {
-        TestTable table = new TestTable(type) {
+        TestTable table = new TestTable(type, name) {
             @Override
             public IgniteDistribution distribution() {
                 return distr;
-            }
-
-            @Override
-            public String name() {
-                return name;
             }
         };
 
@@ -520,13 +519,16 @@ public abstract class AbstractPlannerTest extends IgniteAbstractTest {
 
         List<RelNode> deserializedNodes = new ArrayList<>();
 
-        Map<UUID, IgniteTable> tableMap = publicSchema.getTableNames().stream()
+        Map<UUID, InternalIgniteTable> tableMap = publicSchema.getTableNames().stream()
                 .map(publicSchema::getTable)
-                .map(IgniteTable.class::cast)
+                .map(InternalIgniteTable.class::cast)
                 .collect(Collectors.toMap(IgniteTable::id, Function.identity()));
 
+        Map<UUID, IgniteIndex> idxMap = tableMap.values().stream().map(InternalIgniteTable::indexes).flatMap(i -> i.values().stream())
+                .collect(Collectors.toMap(IgniteIndex::id, Function.identity()));
+
         for (String s : serialized) {
-            RelJsonReader reader = new RelJsonReader(new SqlSchemaManagerImpl(tableMap));
+            RelJsonReader reader = new RelJsonReader(new SqlSchemaManagerImpl(tableMap, idxMap));
             deserializedNodes.add(reader.read(s));
         }
 
@@ -576,6 +578,10 @@ public abstract class AbstractPlannerTest extends IgniteAbstractTest {
             this(type, 100.0);
         }
 
+        TestTable(RelDataType type, String name) {
+            this(name, type, 100.0);
+        }
+
         TestTable(RelDataType type, double rowCnt) {
             this(UUID.randomUUID().toString(), type, rowCnt);
         }
@@ -611,12 +617,12 @@ public abstract class AbstractPlannerTest extends IgniteAbstractTest {
         public IgniteLogicalIndexScan toRel(
                 RelOptCluster cluster,
                 RelOptTable relOptTbl,
-                String idxName,
+                IgniteIndex idx,
                 @Nullable List<RexNode> proj,
                 @Nullable RexNode cond,
                 @Nullable ImmutableBitSet requiredColumns
         ) {
-            return IgniteLogicalIndexScan.create(cluster, cluster.traitSet(), relOptTbl, idxName, proj, cond, requiredColumns);
+            return IgniteLogicalIndexScan.create(cluster, cluster.traitSet(), relOptTbl, idx, proj, cond, requiredColumns);
         }
 
         /** {@inheritDoc} */
@@ -735,7 +741,7 @@ public abstract class AbstractPlannerTest extends IgniteAbstractTest {
          * TODO Documentation https://issues.apache.org/jira/browse/IGNITE-15859
          */
         public TestTable addIndex(RelCollation collation, String name) {
-            indexes.put(name, new IgniteIndex(collation, name, this));
+            indexes.put(name, new TestIgniteIndex(collation, name, this));
 
             return this;
         }
@@ -748,7 +754,7 @@ public abstract class AbstractPlannerTest extends IgniteAbstractTest {
 
         /** {@inheritDoc} */
         @Override
-        public void removeIndex(String idxName) {
+        public IgniteIndex removeIndex(String idxName) {
             throw new AssertionError();
         }
 
@@ -928,10 +934,13 @@ public abstract class AbstractPlannerTest extends IgniteAbstractTest {
     }
 
     static class SqlSchemaManagerImpl implements SqlSchemaManager {
-        private final Map<UUID, IgniteTable> tablesById;
+        private final Map<UUID, InternalIgniteTable> tablesById;
 
-        public SqlSchemaManagerImpl(Map<UUID, IgniteTable> tablesById) {
+        private final Map<UUID, IgniteIndex> idxMap;
+
+        public SqlSchemaManagerImpl(Map<UUID, InternalIgniteTable> tablesById, Map<UUID, IgniteIndex> idxMap) {
             this.tablesById = tablesById;
+            this.idxMap = idxMap;
         }
 
         @Override
@@ -942,6 +951,18 @@ public abstract class AbstractPlannerTest extends IgniteAbstractTest {
         @Override
         public IgniteTable tableById(UUID id) {
             return tablesById.get(id);
+        }
+
+        @Override
+        public IgniteIndex indexById(UUID id) {
+            return idxMap.get(id);
+        }
+    }
+
+    static class TestIgniteIndex extends IgniteIndex {
+        public TestIgniteIndex(RelCollation collation, String idxName, InternalIgniteTable tbl) {
+            super(collation, new InternalSortedIndexImpl(UUID.randomUUID(), idxName, mock(SortedIndexStorage.class),
+                    mock(TableImpl.class)), tbl);
         }
     }
 }
